@@ -1,0 +1,43 @@
+! Arista EOS — generated from Nautobot inventory
+! Partial configuration for review only
+! Does not include routing protocols or system settings
+!
+hostname {{ hostname }}
+!
+{% set vlans = namespace(items={}) %}
+{% for interface in interfaces %}
+{% if interface.untagged_vlan %}
+{% set vlan = interface.untagged_vlan %}
+{% set _ = vlans.items.update({vlan.vid: vlan.name}) %}
+{% endif %}
+{% endfor %}
+{% for vid, name in vlans.items | dictsort %}
+vlan {{ vid }}
+!
+{% endfor %}
+{% for interface in interfaces | sort(attribute="name") %}
+{% if interface.mode == "ACCESS" and interface.untagged_vlan %}
+interface {{ interface.name }}
+{% if interface.description %}
+   description {{ interface.description }}
+{% endif %}
+   switchport mode access
+   switchport access vlan {{ interface.untagged_vlan.vid }}
+{% if not interface.enabled %}
+   shutdown
+{% endif %}
+!
+{% elif interface.ip_addresses %}
+interface {{ interface.name }}
+{% if interface.description %}
+   description {{ interface.description }}
+{% endif %}
+{% for ip in interface.ip_addresses %}
+   ip address {{ ip.address }}
+{% endfor %}
+{% if not interface.enabled %}
+   shutdown
+{% endif %}
+!
+{% endif %}
+{% endfor %}
