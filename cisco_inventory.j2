@@ -1,0 +1,93 @@
+! Cisco IOS XE — generated from Nautobot inventory
+! Partial IPv4 configuration for review only
+! AAA, management access and other system settings are not included
+!
+{% macro netmask(prefix) -%}
+{%- set masks = [0, 128, 192, 224, 240, 248, 252, 254, 255] -%}
+{%- for offset in [0, 8, 16, 24] -%}
+{%- set bits = [8, [0, (prefix | int) - offset] | max] | min -%}
+{{- masks[bits] -}}{{- "." if not loop.last else "" -}}
+{%- endfor -%}
+{%- endmacro %}
+{% set ctx = config_context | default({}) %}
+{% set route = ctx.get("routing", routing | default({})) %}
+{% set ospf = route.get("ospf", {}) %}
+{% set bgp = route.get("bgp", {}) %}
+hostname {{ hostname }}
+!
+{% for interface in interfaces | sort(attribute="name") %}
+interface {{ interface.name }}
+{% if interface.description %}
+ description {{ interface.description }}
+{% endif %}
+{% for ip in interface.ip_addresses if ":" not in ip.address %}
+ ip address {{ ip.address.split("/")[0] }} {{ netmask(ip.address.split("/")[1]) }}
+{% endfor %}
+{% if not interface.ip_addresses %}
+ no ip address
+{% endif %}
+{% if interface.name in ospf.get("point_to_point_interfaces", []) %}
+ ip ospf network point-to-point
+{% endif %}
+{% if interface.enabled %}
+ no shutdown
+{% else %}
+ shutdown
+{% endif %}
+!
+{% endfor %}
+{% if ospf %}
+router ospf {{ ospf.process_id }}
+ router-id {{ ospf.router_id }}
+{% for interface in interfaces | sort(attribute="name") %}
+{% if interface.name in ospf.get("interfaces", []) %}
+{% for ip in interface.ip_addresses if ":" not in ip.address %}
+ network {{ ip.address.split("/")[0] }} 0.0.0.0 area {{ ospf.area }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% set default_route = ospf.get("default_information_originate", {}) %}
+{% if default_route %}
+ default-information originate{% if default_route.get("always", false) %} always{% endif %} metric {{ default_route.metric }}
+{% endif %}
+!
+{% endif %}
+{% if bgp %}
+router bgp {{ bgp.asn }}
+{% if bgp.get("log_neighbor_changes", false) %}
+ bgp log-neighbor-changes
+{% endif %}
+{% if not bgp.get("default_ipv4_unicast", true) %}
+ no bgp default ipv4-unicast
+{% endif %}
+{% for neighbor in bgp.get("neighbors", []) %}
+ neighbor {{ neighbor.address }} remote-as {{ neighbor.remote_as }}
+{% endfor %}
+ !
+ address-family ipv4
+{% for interface in interfaces | sort(attribute="name") %}
+{% if interface.name in bgp.get("advertise_interfaces", []) %}
+{% for ip in interface.ip_addresses if ":" not in ip.address %}
+  network {{ ip.address.split("/")[0] }} mask {{ netmask(ip.address.split("/")[1]) }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% set redistribution = bgp.get("redistribute_ospf", {}) %}
+{% if redistribution %}
+{% set matches = [] %}
+{% if redistribution.get("match_internal", false) %}
+{% set matches = matches + ["internal"] %}
+{% endif %}
+{% if redistribution.get("match_external_2", false) %}
+{% set matches = matches + ["external", "2"] %}
+{% endif %}
+  redistribute ospf {{ redistribution.process_id }}{% if matches %} match {{ matches | join(" ") }}{% endif %}{{ "" }}
+{% endif %}
+{% for neighbor in bgp.get("neighbors", []) %}
+{% if neighbor.get("ipv4_activate", false) %}
+  neighbor {{ neighbor.address }} activate
+{% endif %}
+{% endfor %}
+ exit-address-family
+!
+{% endif %}
