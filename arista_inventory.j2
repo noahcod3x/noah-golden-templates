@@ -1,7 +1,11 @@
 ! Arista EOS — generated from Nautobot inventory
 ! Partial configuration for review only
-! Does not include routing protocols or system settings
+! Includes interface addressing and OSPF
+! Other system settings are not included
 !
+{% set ctx = config_context | default({}) %}
+{% set route = ctx.get("routing", routing | default({})) %}
+{% set ospf = route.get("ospf", {}) %}
 hostname {{ hostname }}
 !
 {% set vlans = namespace(items={}) %}
@@ -32,12 +36,35 @@ interface {{ interface.name }}
 {% if interface.description %}
    description {{ interface.description }}
 {% endif %}
+{% if interface.name.startswith("Ethernet") and not interface.mode %}
+   no switchport
+{% endif %}
 {% for ip in interface.ip_addresses %}
    ip address {{ ip.address }}
 {% endfor %}
+{% if interface.name in ospf.get("point_to_point_interfaces", []) %}
+   ip ospf network point-to-point
+{% endif %}
 {% if not interface.enabled %}
    shutdown
 {% endif %}
 !
 {% endif %}
 {% endfor %}
+{% if route.get("ip_routing", false) %}
+ip routing
+!
+{% endif %}
+{% if ospf %}
+router ospf {{ ospf.process_id }}
+   router-id {{ ospf.router_id }}
+{% for interface in interfaces | sort(attribute="name") %}
+{% if interface.name in ospf.get("interfaces", []) %}
+{% for ip in interface.ip_addresses %}
+   network {{ ip.address.split("/")[0] }}/32 area {{ ospf.area }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+   max-lsa {{ ospf.max_lsa }}
+!
+{% endif %}
