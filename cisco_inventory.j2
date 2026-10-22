@@ -13,6 +13,56 @@
 {% set route = ctx.get("routing", routing | default({})) %}
 {% set ospf = route.get("ospf", {}) %}
 {% set bgp = route.get("bgp", {}) %}
+{# Prefer BGP Models when present; otherwise retain Config Context behavior. #}
+{% set instances = bgp_routing_instances | default([]) %}
+{% if instances %}
+{% if instances | length != 1 %}
+{{ bgp_models_requires_exactly_one_routing_instance() }}
+{% endif %}
+{% set instance = instances[0] %}
+{% if not instance.autonomous_system or not instance.router_id %}
+{{ bgp_models_requires_local_as_and_router_id() }}
+{% endif %}
+{% set model = namespace(neighbors=[]) %}
+{% for endpoint in instance.endpoints %}
+{% if endpoint.enabled %}
+{% if not endpoint.peer or not endpoint.source_ip %}
+{{ bgp_models_endpoint_requires_peer_and_local_ip() }}
+{% endif %}
+{% if endpoint.peer.enabled %}
+{% if not endpoint.peer.source_ip or not endpoint.peer.autonomous_system %}
+{{ bgp_models_peer_requires_ip_and_remote_as() }}
+{% endif %}
+{% if ":" in endpoint.peer.source_ip.address %}
+{{ bgp_models_template_supports_ipv4_peers_only() }}
+{% endif %}
+{% set af = namespace(ipv4=false) %}
+{% for family in endpoint.address_families %}
+{% if family.afi_safi == "IPV4_UNICAST" %}
+{% set af.ipv4 = true %}
+{% if family.import_policy or family.export_policy %}
+{{ bgp_models_policy_rendering_not_yet_supported() }}
+{% endif %}
+{% endif %}
+{% endfor %}
+{% if not af.ipv4 %}
+{{ bgp_models_enabled_peer_requires_ipv4_unicast() }}
+{% endif %}
+{% set model.neighbors = model.neighbors + [{
+    "address": endpoint.peer.source_ip.address.split("/")[0],
+    "remote_as": endpoint.peer.autonomous_system.asn,
+    "ipv4_activate": true
+}] %}
+{% endif %}
+{% endif %}
+{% endfor %}
+{% set bgp = dict(
+    bgp,
+    asn=instance.autonomous_system.asn,
+    router_id=instance.router_id.address.split("/")[0],
+    neighbors=model.neighbors
+) %}
+{% endif %}
 hostname {{ hostname }}
 !
 {% for interface in interfaces | sort(attribute="name") %}
@@ -54,6 +104,9 @@ router ospf {{ ospf.process_id }}
 {% endif %}
 {% if bgp %}
 router bgp {{ bgp.asn }}
+{% if bgp.get("router_id") %}
+ bgp router-id {{ bgp.router_id }}
+{% endif %}
 {% if bgp.get("log_neighbor_changes", false) %}
  bgp log-neighbor-changes
 {% endif %}
